@@ -2,11 +2,13 @@
 /*--- Thread Switcheroo: bruteforce concurrency bug finder sr_main.c ---*/
 /*----------------------------------------------------------------------*/
 
-#include "sr_runtime.h"
+#include "sr_instrument.h"
 
 #include "pub_tool_basics.h"
 #include "pub_tool_libcassert.h"
+#include "pub_tool_mallocfree.h"
 #include "pub_tool_tooliface.h"
+#include "sr_runtime.h"
 
 typedef struct _SRState {
 	IRSB* sb;
@@ -201,7 +203,7 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 	}
 }
 
-static IRSB* instrument(IRSB* sbIn)
+IRSB* ML_(instrument)(IRSB* sbIn)
 {
 	SRState state;
 	state.sb = deepCopyIRSBExceptStmts(sbIn);
@@ -210,11 +212,23 @@ static IRSB* instrument(IRSB* sbIn)
 	state.temps_written = VG_(calloc)("SRState_temps_written", state.temps_count, sizeof(*state.temps_written));
 
 	IRTemp phase_temp = newIRTemp(state.sb->tyenv, Ity_I32); // FIXME: Type
-	addStmtToISRB(state.sb, IRStmt_Dirty(ML_(helper_init_phased)(phase_temp, state.temps_count)));
+	addStmtToIRSB(state.sb, IRStmt_Dirty(ML_(helper_init_phased)(phase_temp, state.temps_count)));
 	state.phase = IRExpr_RdTmp(phase_temp);
 
+	int i = 0;
+	if (sbIn->stmts_used > 0 && sbIn->stmts[0]->tag == Ist_IMark)
+		i++;
 	state.current_phase = 0;
 	start_phase(&state);
-
-
+	for(; i < sbIn->stmts_used; i++) {
+		IRStmt* stmt = sbIn->stmts[i];
+		if (stmt->tag == Ist_IMark) {
+			// Phase boundary
+			next_phase(&state);
+			continue;
+		}
+		instrument_statement(&state, stmt);		
+	}
+	instrument_phased_exit(&state, NULL);
+	return state.sb;
 }
