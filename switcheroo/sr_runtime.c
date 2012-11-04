@@ -109,7 +109,7 @@ static Accessor* get_accessor(IRType type)
 	VG_(tool_panic)("No accessor for type.");
 }
 
-IRDirty* ML_(helper_retrieve_temp)(IRTemp destination, IRTemp canonical, IRType type)
+IRDirty* ML_(helper_retrieve_temp)(IRTemp canonical, IRType type, IRTemp destination)
 {
 	Accessor* accessor = get_accessor(type);
 	IRExpr* const_canonical = mkIRExpr_HWord(canonical);

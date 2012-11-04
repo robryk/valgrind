@@ -40,7 +40,7 @@ static void start_phase(SRState* state)
 	}
 	// TODO: decide on type of state
 	state->bool_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_CmpEQ32, state->phase, IRExpr_Const(IRConst_U32(state->current_phase))));
-	// state->zero_current_phase
+	state->zero_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_Sub32, state->phase, IRExpr_Const(IRConst_U32(state->current_phase))));
 }
 
 static void next_phase(SRState* state)
@@ -63,7 +63,7 @@ static void next_phase(SRState* state)
 
 static IRExpr* instrument_temp(SRState* state, IRTemp orig_temp)
 {
-	tl_assert(orig_temp < state->temps_count);
+	tl_assert(0 <= orig_temp && orig_temp < state->temps_count);
 	if (state->temps_mapping[orig_temp] == NULL) {
 		IRType type = typeOfIRTemp(state->sb->tyenv, orig_temp);
 		IRTemp current_temp = newIRTemp(state->sb->tyenv, type);
@@ -153,13 +153,13 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			break;
 		case Ist_Put:
 			stmt->Ist.Put.data = instrument_expression(state, stmt->Ist.Put.data);
-			stmt->Ist.Put.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Put.data, wrap_expression(state->sb, IRExpr_Get(stmt->Ist.Put.offset, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Put.data)))));
+			stmt->Ist.Put.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Put.data, wrap_expression(state->sb, wrap_expression(state->sb, IRExpr_Get(stmt->Ist.Put.offset, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Put.data))))));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_PutI:
 			stmt->Ist.PutI.details->ix = instrument_expression(state, stmt->Ist.PutI.details->ix);
 			stmt->Ist.PutI.details->data = instrument_expression(state, stmt->Ist.PutI.details->data);
-			stmt->Ist.PutI.details->data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.PutI.details->data, IRExpr_GetI(stmt->Ist.PutI.details->descr, stmt->Ist.PutI.details->ix, stmt->Ist.PutI.details->bias)));
+			stmt->Ist.PutI.details->data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.PutI.details->data, wrap_expression(state->sb, IRExpr_GetI(stmt->Ist.PutI.details->descr, stmt->Ist.PutI.details->ix, stmt->Ist.PutI.details->bias))));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_WrTmp:
@@ -170,7 +170,7 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 		case Ist_Store:
 			stmt->Ist.Store.addr = instrument_expression(state, stmt->Ist.Store.addr);
 			stmt->Ist.Store.data = instrument_expression(state, stmt->Ist.Store.data);
-			stmt->Ist.Store.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Store.data, wrap_expression(state->sb, IRExpr_Load(stmt->Ist.Store.end, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Store.data), stmt->Ist.Store.addr))));
+			stmt->Ist.Store.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Store.data, wrap_expression(state->sb, wrap_expression(state->sb, IRExpr_Load(stmt->Ist.Store.end, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Store.data), stmt->Ist.Store.addr)))));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_CAS:
@@ -193,9 +193,9 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			break;
 		case Ist_Exit:
 			tl_assert(typeOfIRExpr(state->sb->tyenv, stmt->Ist.Exit.guard) == Ity_I1);
-			stmt->Ist.Dirty.details->guard = instrument_expression(state, stmt->Ist.Dirty.details->guard);
-			stmt->Ist.Dirty.details->guard = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Dirty.details->guard, IRExpr_Const(IRConst_U1(False))));
-			instrument_phased_exit(state, stmt->Ist.Dirty.details->guard);
+			stmt->Ist.Exit.guard = instrument_expression(state, stmt->Ist.Exit.guard);
+			stmt->Ist.Exit.guard = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Exit.guard, IRExpr_Const(IRConst_U1(False))));
+			instrument_phased_exit(state, stmt->Ist.Exit.guard);
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		default:
