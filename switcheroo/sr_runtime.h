@@ -17,7 +17,7 @@ typedef union _Value {
 
 IRDirty* ML_(helper_exit_phased)(void);
 IRDirty* ML_(helper_init_phased)(HWord values_needed, IRTemp phase);
-IRDirty* ML_(helper_set_phase)(HWord phase);
+IRDirty* ML_(helper_set_phase)(UChar phase);
 
 IRDirty* ML_(helper_retrieve_temp)(IRTemp canonical, IRType type, IRTemp destination);
 IRDirty* ML_(helper_store_temp)(IRTemp canonical, IRType type);

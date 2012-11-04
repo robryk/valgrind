@@ -39,8 +39,8 @@ static void start_phase(SRState* state)
 		state->temps_mapping[i] = NULL;
 	}
 	// TODO: decide on type of state
-	state->bool_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_CmpEQ32, state->phase, IRExpr_Const(IRConst_U32(state->current_phase))));
-	state->zero_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_Sub32, state->phase, IRExpr_Const(IRConst_U32(state->current_phase))));
+	state->bool_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_CmpEQ8, state->phase, IRExpr_Const(IRConst_U8(state->current_phase))));
+	state->zero_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_Sub8, state->phase, IRExpr_Const(IRConst_U8(state->current_phase))));
 }
 
 static void next_phase(SRState* state)
@@ -211,7 +211,7 @@ IRSB* ML_(instrument)(IRSB* sbIn)
 	state.temps_mapping = VG_(calloc)("SRState_temps_mapping", state.temps_count, sizeof(*state.temps_mapping));
 	state.temps_written = VG_(calloc)("SRState_temps_written", state.temps_count, sizeof(*state.temps_written));
 
-	IRTemp phase_temp = newIRTemp(state.sb->tyenv, Ity_I32); // FIXME: Type
+	IRTemp phase_temp = newIRTemp(state.sb->tyenv, Ity_I8);
 	addStmtToIRSB(state.sb, IRStmt_Dirty(ML_(helper_init_phased)(phase_temp, state.temps_count)));
 	state.phase = IRExpr_RdTmp(phase_temp);
 

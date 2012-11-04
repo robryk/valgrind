@@ -2,11 +2,10 @@
 /*--- Thread Switcheroo: bruteforce concurrency bug finder sr_main.c ---*/
 /*----------------------------------------------------------------------*/
 
-#include "sr_runtime.h"
-
 #include "pub_tool_basics.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_tooliface.h"
+#include "sr_instrument.h"
 
 static void sr_post_clo_init(void)
 {
@@ -44,7 +43,9 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		}
 		addStmtToIRSB(sbOut, st);
 	}
-    return sbOut;
+    IRSB* sbFinal = ML_(instrument)(sbOut);
+    ppIRSB(sbFinal);
+    return sbFinal;
 }
 
 static void sr_fini(Int exitcode)

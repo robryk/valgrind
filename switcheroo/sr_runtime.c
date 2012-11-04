@@ -27,7 +27,7 @@ IRDirty* ML_(helper_exit_phased)(void)
 	return unsafeIRDirty_0_N(0, "exit_phased", &rt_exit_phased, mkIRExprVec_0());
 }
 
-static VG_REGPARM(1) int rt_init_phased(HWord values_needed)
+static VG_REGPARM(1) UChar rt_init_phased(HWord values_needed)
 {
 	SRThreadState* state = rt_my_state();
 	if (values_needed > state->values_size) {
@@ -46,14 +46,14 @@ IRDirty* ML_(helper_init_phased)(HWord values_needed, IRTemp phase)
 	return unsafeIRDirty_1_N(phase, 1, "init_phased", &rt_init_phased, mkIRExprVec_1(const_values_needed));
 }
 
-static VG_REGPARM(1) void rt_set_phase(HWord phase)
+static VG_REGPARM(1) void rt_set_phase(UChar phase)
 {
 	rt_my_state()->phase = phase;
 }
 
-IRDirty* ML_(helper_set_phase)(HWord phase)
+IRDirty* ML_(helper_set_phase)(UChar phase)
 {
-	IRExpr* const_phase = mkIRExpr_HWord(phase);
+	IRExpr* const_phase = IRExpr_Const(IRConst_U8(phase));
 	return unsafeIRDirty_0_N(1, "set_phase", &rt_set_phase, mkIRExprVec_1(const_phase));
 }
 
