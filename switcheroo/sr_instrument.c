@@ -161,12 +161,24 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			stmt->Ist.Store.addr = instrument_expression(state, stmt->Ist.Store.addr);
 			stmt->Ist.Store.addr = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, mkIRExpr_HWord(&rt_dummy_location), stmt->Ist.Store.addr));
 			stmt->Ist.Store.data = instrument_expression(state, stmt->Ist.Store.data);
-			//stmt->Ist.Store.data = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, IRExpr_Load(stmt->Ist.Store.end, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Store.data), stmt->Ist.Store.addr), stmt->Ist.Store.data));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_CAS:
+			stmt->Ist.CAS.details->addr = instrument_expression(state, stmt->Ist.CAS.details->addr);
+			stmt->Ist.CAS.details->addr = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, mkIRExpr_HWord(&rt_dummy_location), stmt->Ist.CAS.details->addr));
+			stmt->Ist.CAS.details->expdLo = instrument_expression(state, stmt->Ist.CAS.details->expdLo);
+			if (stmt->Ist.CAS.details->expdHi != NULL)
+				stmt->Ist.CAS.details->expdHi = instrument_expression(state, stmt->Ist.CAS.details->expdHi);
+			stmt->Ist.CAS.details->dataLo = instrument_expression(state, stmt->Ist.CAS.details->dataLo);
+			if (stmt->Ist.CAS.details->dataHi != NULL)
+				stmt->Ist.CAS.details->dataHi = instrument_expression(state, stmt->Ist.CAS.details->dataHi);
+			mark_temp_write(state, stmt->Ist.CAS.details->oldLo);
+			if (stmt->Ist.CAS.details->oldHi != IRTemp_INVALID)
+				mark_temp_write(state, stmt->Ist.CAS.details->oldHi);
+			addStmtToIRSB(state->sb, stmt);
+			break;
 		case Ist_LLSC:
-			VG_(tool_panic)("CAS and LLSC are unimplemented");
+			VG_(tool_panic)("LLSC is unimplemented");
 		case Ist_Dirty:
 			if (stmt->Ist.Dirty.details->tmp == IRTemp_INVALID) {
 				IRExpr* orig_guard = IRExpr_Unop(Iop_1Uto8, instrument_expression(state, stmt->Ist.Dirty.details->guard));
