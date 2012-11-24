@@ -4,6 +4,7 @@
 
 #include "pub_tool_basics.h"
 #include "pub_tool_libcassert.h"
+#include "pub_tool_mallocfree.h"
 #include "pub_tool_tooliface.h"
 #include "sr_instrument.h"
 

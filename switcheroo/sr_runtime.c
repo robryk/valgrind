@@ -2,6 +2,7 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_threadstate.h"
+#include "sr_flatten.h"
 
 typedef struct _SRThreadState {
 	int phase;
@@ -22,9 +23,12 @@ static void rt_exit_phased(void)
 	rt_my_state()->phase = 0;
 }
 
-IRDirty* ML_(helper_exit_phased)(void)
+void ML_(helper_exit_phased)(IRSB* sb, IRExpr* guard)
 {
-	return unsafeIRDirty_0_N(0, "exit_phased", &rt_exit_phased, mkIRExprVec_0());
+	IRDirty* call = unsafeIRDirty_0_N(0, "exit_phased", &rt_exit_phased, mkIRExprVec_0());
+	if (guard != NULL)
+		call->guard = guard;
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
 }
 
 static VG_REGPARM(1) UChar rt_init_phased(HWord values_needed)
@@ -40,21 +44,27 @@ static VG_REGPARM(1) UChar rt_init_phased(HWord values_needed)
 	return state->phase;
 }
 
-IRDirty* ML_(helper_init_phased)(HWord values_needed, IRTemp phase)
+IRExpr* ML_(helper_init_phased)(IRSB* sb, HWord values_needed)
 {
 	IRExpr* const_values_needed = mkIRExpr_HWord(values_needed);
-	return unsafeIRDirty_1_N(phase, 1, "init_phased", &rt_init_phased, mkIRExprVec_1(const_values_needed));
+	IRTemp phase = newIRTemp(sb->tyenv, Ity_I64);
+	IRDirty* call = unsafeIRDirty_1_N(phase, 1, "init_phased", &rt_init_phased, mkIRExprVec_1(const_values_needed));
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
+	return ML_(flatten_expression)(sb, IRExpr_Unop(Iop_64to8, IRExpr_RdTmp(phase)));
 }
 
-static VG_REGPARM(1) void rt_set_phase(UChar phase)
+static VG_REGPARM(1) void rt_set_phase(HWord phase)
 {
 	rt_my_state()->phase = phase;
 }
 
-IRDirty* ML_(helper_set_phase)(UChar phase)
+void ML_(helper_set_phase)(IRSB* sb, HWord phase, IRExpr* guard)
 {
-	IRExpr* const_phase = IRExpr_Const(IRConst_U8(phase));
-	return unsafeIRDirty_0_N(1, "set_phase", &rt_set_phase, mkIRExprVec_1(const_phase));
+	IRExpr* const_phase = mkIRExpr_HWord(phase);
+	IRDirty* call = unsafeIRDirty_0_N(1, "set_phase", &rt_set_phase, mkIRExprVec_1(const_phase));
+	if (guard)
+		call->guard = guard;
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
 }
 
 #define accessor(Type, CType) \
@@ -72,13 +82,13 @@ static VG_REGPARM(2) void rt_put_##Type(HWord idx, CType value) \
 	state->values[idx].Type = value; \
 }
 
-accessor(U1, Bool);
-accessor(U8, UChar);
-accessor(U16, UShort);
-accessor(U32, UInt);
-accessor(U64, ULong);
-accessor(F64, Double);
-accessor(F64i, ULong);
+accessor(U1, HWord);
+accessor(U8, HWord);
+accessor(U16, HWord);
+accessor(U32, HWord);
+accessor(U64, HWord);
+//accessor(F64, HWord);
+//accessor(F64i, HWord);
 
 #undef accessor
 
@@ -86,15 +96,17 @@ typedef struct _Accessor {
 	IRType type;
 	char* get_name;
 	void* get;
+	IROp get_cast;
 	char* put_name;
 	void* put;
+	IROp put_cast;
 } Accessor;
 Accessor accessors[] = {
-	{ Ity_I1, "get_U1", &rt_get_U1, "put_U1", &rt_put_U1 },
-	{ Ity_I8, "get_U8", &rt_get_U8, "put_U8", &rt_put_U8 },
-	{ Ity_I16, "get_U16", &rt_get_U16, "put_U16", &rt_put_U16 },
-	{ Ity_I32, "get_U32", &rt_get_U32, "put_U32", &rt_put_U32 },
-	{ Ity_I64, "get_U64", &rt_get_U64,"put_U64",  &rt_put_U64 },
+	{ Ity_I1, "get_U1", &rt_get_U1, Iop_64to1, "put_U1", &rt_put_U1, Iop_1Uto64 },
+	{ Ity_I8, "get_U8", &rt_get_U8, Iop_64to8, "put_U8", &rt_put_U8, Iop_8Uto64 },
+	{ Ity_I16, "get_U16", &rt_get_U16, Iop_64to16, "put_U16", &rt_put_U16, Iop_16Uto64 },
+	{ Ity_I32, "get_U32", &rt_get_U32, Iop_64to32, "put_U32", &rt_put_U32, Iop_32Uto64 },
+	{ Ity_I64, "get_U64", &rt_get_U64, Iop_INVALID, "put_U64",  &rt_put_U64, Iop_INVALID },
 	//{ Ity_F64, "get_F64", &rt_get_F64, "put_F64", &rt_put_F64 },
 	//{ Ity_F64i, "get_F64i", &rt_get_F64i, "put_F64i", &rt_put_F64i },
 };
@@ -109,17 +121,29 @@ static Accessor* get_accessor(IRType type)
 	VG_(tool_panic)("No accessor for type.");
 }
 
-IRDirty* ML_(helper_retrieve_temp)(IRTemp canonical, IRType type, IRTemp destination)
+IRExpr* ML_(helper_retrieve_temp)(IRSB* sb, IRTemp canonical, IRType type)
 {
 	Accessor* accessor = get_accessor(type);
 	IRExpr* const_canonical = mkIRExpr_HWord(canonical);
-	return unsafeIRDirty_1_N(destination, 1, accessor->get_name, accessor->get, mkIRExprVec_1(const_canonical));
+	IRTemp temp = newIRTemp(sb->tyenv, Ity_I64);
+	IRDirty* call = unsafeIRDirty_1_N(temp, 1, accessor->get_name, accessor->get, mkIRExprVec_1(const_canonical));
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
+	IRExpr* result = IRExpr_RdTmp(temp);
+	if (accessor->get_cast != Iop_INVALID)
+		result = ML_(flatten_expression)(sb, IRExpr_Unop(accessor->get_cast, IRExpr_RdTmp(temp)));
+	return result;
 }
 
-IRDirty* ML_(helper_store_temp)(IRTemp canonical, IRType type)
+void ML_(helper_store_temp)(IRSB* sb, IRTemp canonical, IRExpr* guard)
 {
+	IRType type = typeOfIRTemp(sb->tyenv, canonical);
 	Accessor* accessor = get_accessor(type);
 	IRExpr* const_canonical = mkIRExpr_HWord(canonical);
-	IRExpr* temp_source = IRExpr_RdTmp(canonical);
-	return unsafeIRDirty_0_N(2, accessor->put_name, accessor->put, mkIRExprVec_2(const_canonical, temp_source));
+	IRExpr* source = IRExpr_RdTmp(canonical);
+	if (accessor->put_cast != Iop_INVALID)
+		source = ML_(flatten_expression)(sb, IRExpr_Unop(accessor->put_cast, source));
+	IRDirty* call = unsafeIRDirty_0_N(2, accessor->put_name, accessor->put, mkIRExprVec_2(const_canonical, source));
+	if (guard)
+		call->guard = guard;
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
 }

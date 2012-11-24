@@ -8,6 +8,7 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_tooliface.h"
+#include "sr_flatten.h"
 #include "sr_runtime.h"
 
 typedef struct _SRState {
@@ -17,30 +18,25 @@ typedef struct _SRState {
 	int current_phase;
 
 	IRExpr* bool_current_phase;
-	IRExpr* zero_current_phase;
+	IRExpr* one_current_phase;
 
 	int temps_count;
 	IRExpr** temps_mapping;
 	Bool* temps_written;
 } SRState;
 
-static IRExpr* wrap_expression(IRSB* sb, IRExpr* expr)
-{
-	IRTemp tmp = newIRTemp(sb->tyenv, typeOfIRExpr(sb->tyenv, expr));
-	addStmtToIRSB(sb, IRStmt_WrTmp(tmp, expr));
-	return IRExpr_RdTmp(tmp);
-}
+static char rt_dummy_location[32];
 
 static void start_phase(SRState* state)
 {
 	int i;
-	for(i=0;i<state->sb->tyenv->types_used;i++) {
+	for(i=0;i<state->temps_count;i++) {
 		state->temps_written[i] = False;
 		state->temps_mapping[i] = NULL;
 	}
 	// TODO: decide on type of state
-	state->bool_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_CmpEQ8, state->phase, IRExpr_Const(IRConst_U8(state->current_phase))));
-	state->zero_current_phase = wrap_expression(state->sb, IRExpr_Binop(Iop_Sub8, state->phase, IRExpr_Const(IRConst_U8(state->current_phase))));
+	state->bool_current_phase = ML_(flatten_expression)(state->sb, IRExpr_Binop(Iop_CmpEQ8, state->phase, IRExpr_Const(IRConst_U8(state->current_phase))));
+	state->one_current_phase = ML_(flatten_expression)(state->sb, IRExpr_Unop(Iop_1Uto8, state->bool_current_phase));
 }
 
 static void next_phase(SRState* state)
@@ -48,14 +44,9 @@ static void next_phase(SRState* state)
 	// TODO(robryk): Flush only temps that will be used in the future (ie. ones that get used in a phase in whoch they weren't created).
 	int i;
 	for(i=0;i<state->temps_count;i++)
-		if (state->temps_written[i]) {
-			IRDirty* store_action = ML_(helper_store_temp)(i, typeOfIRTemp(state->sb->tyenv, i));
-			store_action->guard = state->bool_current_phase;
-			addStmtToIRSB(state->sb, IRStmt_Dirty(store_action));
-		}
-	IRDirty* advance_phase_action = ML_(helper_set_phase)(state->current_phase+1);
-	advance_phase_action->guard = state->bool_current_phase;
-	addStmtToIRSB(state->sb, IRStmt_Dirty(advance_phase_action));
+		if (state->temps_written[i])
+			ML_(helper_store_temp)(state->sb, i, state->bool_current_phase);
+	ML_(helper_set_phase)(state->sb, state->current_phase+1, state->bool_current_phase);
 	state->current_phase++;
 	// Emit a jump to self, so that we do jump between phases
 	start_phase(state);
@@ -66,11 +57,8 @@ static IRExpr* instrument_temp(SRState* state, IRTemp orig_temp)
 	tl_assert(0 <= orig_temp && orig_temp < state->temps_count);
 	if (state->temps_mapping[orig_temp] == NULL) {
 		IRType type = typeOfIRTemp(state->sb->tyenv, orig_temp);
-		IRTemp current_temp = newIRTemp(state->sb->tyenv, type);
-		IRDirty* retrieve_action = ML_(helper_retrieve_temp)(orig_temp, type, current_temp);
 		// We cannot and do not guard the following; it has no side-effects so does no harm in other phases.
-		addStmtToIRSB(state->sb, IRStmt_Dirty(retrieve_action));
-		state->temps_mapping[orig_temp] = IRExpr_RdTmp(current_temp);
+		state->temps_mapping[orig_temp] = ML_(helper_retrieve_temp)(state->sb, orig_temp, type);
 	}
 	return state->temps_mapping[orig_temp];
 }
@@ -85,10 +73,7 @@ static void mark_temp_write(SRState* state, IRTemp temp)
 
 static void instrument_phased_exit(SRState* state, IRExpr* guard)
 {
-	IRDirty* dirty = ML_(helper_exit_phased());
-	if (guard != NULL)
-		dirty->guard = guard;
-	addStmtToIRSB(state->sb, IRStmt_Dirty(dirty));
+	ML_(helper_exit_phased)(state->sb, guard);
 }
 
 static IRExpr* instrument_expression(SRState* state, IRExpr* expr)
@@ -120,8 +105,13 @@ static IRExpr* instrument_expression(SRState* state, IRExpr* expr)
 			expr->Iex.Unop.arg = instrument_expression(state, expr->Iex.Unop.arg);
 			return expr;
 		case Iex_Load:
-			expr->Iex.Load.addr = instrument_expression(state, expr->Iex.Load.addr);
+		{
+			IRExpr* orig_addr = instrument_expression(state, expr->Iex.Load.addr);
+			// TODO: This should be GWord, but for now we support only HWord==GWord
+			IRExpr* addr = IRExpr_Mux0X(state->one_current_phase, mkIRExpr_HWord(&rt_dummy_location), orig_addr);
+			expr->Iex.Load.addr = ML_(flatten_expression)(state->sb, addr);
 			return expr;
+		}
 		case Iex_Const:
 			return expr;
 		case Iex_Mux0X:
@@ -153,13 +143,13 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			break;
 		case Ist_Put:
 			stmt->Ist.Put.data = instrument_expression(state, stmt->Ist.Put.data);
-			stmt->Ist.Put.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Put.data, wrap_expression(state->sb, wrap_expression(state->sb, IRExpr_Get(stmt->Ist.Put.offset, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Put.data))))));
+			stmt->Ist.Put.data = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, IRExpr_Get(stmt->Ist.Put.offset, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Put.data)), stmt->Ist.Put.data));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_PutI:
 			stmt->Ist.PutI.details->ix = instrument_expression(state, stmt->Ist.PutI.details->ix);
 			stmt->Ist.PutI.details->data = instrument_expression(state, stmt->Ist.PutI.details->data);
-			stmt->Ist.PutI.details->data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.PutI.details->data, wrap_expression(state->sb, IRExpr_GetI(stmt->Ist.PutI.details->descr, stmt->Ist.PutI.details->ix, stmt->Ist.PutI.details->bias))));
+			stmt->Ist.PutI.details->data = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, IRExpr_GetI(stmt->Ist.PutI.details->descr, stmt->Ist.PutI.details->ix, stmt->Ist.PutI.details->bias), stmt->Ist.PutI.details->data));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_WrTmp:
@@ -169,8 +159,9 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			break;
 		case Ist_Store:
 			stmt->Ist.Store.addr = instrument_expression(state, stmt->Ist.Store.addr);
+			stmt->Ist.Store.addr = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, mkIRExpr_HWord(&rt_dummy_location), stmt->Ist.Store.addr));
 			stmt->Ist.Store.data = instrument_expression(state, stmt->Ist.Store.data);
-			stmt->Ist.Store.data = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Store.data, wrap_expression(state->sb, wrap_expression(state->sb, IRExpr_Load(stmt->Ist.Store.end, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Store.data), stmt->Ist.Store.addr)))));
+			//stmt->Ist.Store.data = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, IRExpr_Load(stmt->Ist.Store.end, typeOfIRExpr(state->sb->tyenv, stmt->Ist.Store.data), stmt->Ist.Store.addr), stmt->Ist.Store.data));
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_CAS:
@@ -178,8 +169,10 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			VG_(tool_panic)("CAS and LLSC are unimplemented");
 		case Ist_Dirty:
 			if (stmt->Ist.Dirty.details->tmp == IRTemp_INVALID) {
-				stmt->Ist.Dirty.details->guard = instrument_expression(state, stmt->Ist.Dirty.details->guard);
-				stmt->Ist.Dirty.details->guard = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Dirty.details->guard, IRExpr_Const(IRConst_U1(False))));
+				IRExpr* orig_guard = IRExpr_Unop(Iop_1Uto8, instrument_expression(state, stmt->Ist.Dirty.details->guard));
+				IRExpr* new_guard = IRExpr_Binop(Iop_And8, orig_guard, state->one_current_phase);
+				stmt->Ist.Dirty.details->guard = ML_(flatten_expression)(state->sb, IRExpr_Unop(Iop_32to1, IRExpr_Unop(Iop_8Uto32, new_guard)));
+//				stmt->Ist.Dirty.details->guard = ML_(flatten_expression)(state->sb, IRExpr_Mux0X(state->one_current_phase, IRExpr_Const(IRConst_U1(False)), stmt->Ist.Dirty.details->guard));
 				int i;
 				for(i=0;stmt->Ist.Dirty.details->args[i]!=NULL;i++)
 					stmt->Ist.Dirty.details->args[i] = instrument_expression(state, stmt->Ist.Dirty.details->args[i]);
@@ -192,12 +185,15 @@ static void instrument_statement(SRState* state, IRStmt* stmt)
 			addStmtToIRSB(state->sb, stmt);
 			break;
 		case Ist_Exit:
+		{
 			tl_assert(typeOfIRExpr(state->sb->tyenv, stmt->Ist.Exit.guard) == Ity_I1);
-			stmt->Ist.Exit.guard = instrument_expression(state, stmt->Ist.Exit.guard);
-			stmt->Ist.Exit.guard = wrap_expression(state->sb, IRExpr_Mux0X(state->zero_current_phase, stmt->Ist.Exit.guard, IRExpr_Const(IRConst_U1(False))));
+			IRExpr* orig_guard = IRExpr_Unop(Iop_1Uto8, instrument_expression(state, stmt->Ist.Exit.guard));
+			IRExpr* new_guard = IRExpr_Binop(Iop_And8, orig_guard, state->one_current_phase);
+			stmt->Ist.Exit.guard = ML_(flatten_expression)(state->sb, IRExpr_Unop(Iop_32to1, IRExpr_Unop(Iop_8Uto32, new_guard)));
 			instrument_phased_exit(state, stmt->Ist.Exit.guard);
 			addStmtToIRSB(state->sb, stmt);
 			break;
+		}
 		default:
 			VG_(tool_panic)("Unknown statement tag.");
 	}
@@ -211,9 +207,7 @@ IRSB* ML_(instrument)(IRSB* sbIn)
 	state.temps_mapping = VG_(calloc)("SRState_temps_mapping", state.temps_count, sizeof(*state.temps_mapping));
 	state.temps_written = VG_(calloc)("SRState_temps_written", state.temps_count, sizeof(*state.temps_written));
 
-	IRTemp phase_temp = newIRTemp(state.sb->tyenv, Ity_I8);
-	addStmtToIRSB(state.sb, IRStmt_Dirty(ML_(helper_init_phased)(phase_temp, state.temps_count)));
-	state.phase = IRExpr_RdTmp(phase_temp);
+	state.phase = ML_(helper_init_phased)(state.sb, state.temps_count);
 
 	int i = 0;
 	if (sbIn->stmts_used > 0 && sbIn->stmts[0]->tag == Ist_IMark)

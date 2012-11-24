@@ -15,11 +15,11 @@ typedef union _Value {
 	// TODO(robryk): Support for Ity_V128 and Ity_I128
 } Value;
 
-IRDirty* ML_(helper_exit_phased)(void);
-IRDirty* ML_(helper_init_phased)(HWord values_needed, IRTemp phase);
-IRDirty* ML_(helper_set_phase)(UChar phase);
+void ML_(helper_exit_phased)(IRSB* sb, IRExpr* guard);
+IRExpr* ML_(helper_init_phased)(IRSB* sb, HWord values_needed);
+void ML_(helper_set_phase)(IRSB* sb, HWord phase, IRExpr* guard);
 
-IRDirty* ML_(helper_retrieve_temp)(IRTemp canonical, IRType type, IRTemp destination);
-IRDirty* ML_(helper_store_temp)(IRTemp canonical, IRType type);
+IRExpr* ML_(helper_retrieve_temp)(IRSB* sb, IRTemp canonical, IRType type);
+void ML_(helper_store_temp)(IRSB* sb, IRTemp canonical, IRExpr* guard);
 
 #endif  // __GUARD_SR_RUNTIME_H

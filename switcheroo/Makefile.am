@@ -11,7 +11,7 @@ if VGCONF_HAVE_PLATFORM_SEC
 noinst_PROGRAMS += switcheroo-@VGCONF_ARCH_SEC@-@VGCONF_OS@
 endif
 
-NONE_SOURCES_COMMON = sr_main.c sr_runtime.c sr_instrument.c
+NONE_SOURCES_COMMON = sr_main.c sr_runtime.c sr_instrument.c sr_flatten.c
 
 switcheroo_@VGCONF_ARCH_PRI@_@VGCONF_OS@_SOURCES      = \
 	$(NONE_SOURCES_COMMON)
