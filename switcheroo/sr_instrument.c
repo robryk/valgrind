@@ -12,6 +12,8 @@
 #include "sr_runtime.h"
 
 typedef struct _SRState {
+	IRConst *self_address;
+
 	IRSB* sb;
 
 	IRExpr* phase;
@@ -39,7 +41,7 @@ static void start_phase(SRState* state)
 	state->one_current_phase = ML_(flatten_expression)(state->sb, IRExpr_Unop(Iop_1Uto8, state->bool_current_phase));
 }
 
-static void next_phase(SRState* state)
+static void next_phase(SRState* state, IRJumpKind jk)
 {
 	// TODO(robryk): Flush only temps that will be used in the future (ie. ones that get used in a phase in whoch they weren't created).
 	int i;
@@ -48,6 +50,8 @@ static void next_phase(SRState* state)
 			ML_(helper_store_temp)(state->sb, i, state->bool_current_phase);
 	ML_(helper_set_phase)(state->sb, state->current_phase+1, state->bool_current_phase);
 	state->current_phase++;
+	// TODO(robryk): offsIP from guest description
+	addStmtToIRSB(state->sb, IRStmt_Exit(state->bool_current_phase, jk, state->self_address, state->sb->offsIP));
 	// Emit a jump to self, so that we do jump between phases
 	start_phase(state);
 }
@@ -222,19 +226,28 @@ IRSB* ML_(instrument)(IRSB* sbIn)
 	state.phase = ML_(helper_init_phased)(state.sb, state.temps_count);
 
 	int i = 0;
-	if (sbIn->stmts_used > 0 && sbIn->stmts[0]->tag == Ist_IMark)
-		i++;
+	for(; i < sbIn->stmts_used; i++) {
+		if (sbIn->stmts[i]->tag == Ist_IMark) {
+			// TODO: HWord is not necessarily U64
+			state.self_address = IRConst_U64(sbIn->stmts[i]->Ist.IMark.addr);
+			break;
+		}
+	}
+	tl_assert(i < sbIn->stmts_used);
+	i++;
+	
 	state.current_phase = 0;
 	start_phase(&state);
 	for(; i < sbIn->stmts_used; i++) {
 		IRStmt* stmt = sbIn->stmts[i];
 		if (stmt->tag == Ist_IMark) {
 			// Phase boundary
-			next_phase(&state);
+			next_phase(&state, Ijk_Boring);
 			continue;
 		}
 		instrument_statement(&state, stmt);		
 	}
+	state.sb->next = instrument_expression(&state, state.sb->next);
 	instrument_phased_exit(&state, NULL);
 	return state.sb;
 }
