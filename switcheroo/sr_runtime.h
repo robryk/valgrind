@@ -12,6 +12,10 @@ typedef union _Value {
 	ULong  U64;
 	Double F64;
 	ULong  F64i;
+	struct {
+		ULong hi;
+		ULong lo;
+	} V128;
 	// TODO(robryk): Support for Ity_V128 and Ity_I128
 } Value;
 

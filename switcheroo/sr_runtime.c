@@ -121,8 +121,54 @@ static Accessor* get_accessor(IRType type)
 	VG_(tool_panic)("No accessor for type.");
 }
 
+static ULong rt_retrieve_128_lo(HWord idx)
+{
+	SRThreadState* state = rt_my_state();
+	return state->values[idx].V128.lo;
+}
+
+static ULong rt_retrieve_128_hi(HWord idx)
+{
+	SRThreadState* state = rt_my_state();
+	return state->values[idx].V128.hi;
+}
+
+static IRExpr* helper_retrieve_128(IRSB* sb, IRTemp canonical, IROp hilo)
+{
+	IRTemp lo_temp = newIRTemp(sb->tyenv, Ity_I64);
+	IRDirty* lo_call = unsafeIRDirty_1_N(lo_temp, 1, "get_128_lo", &rt_retrieve_128_lo, mkIRExprVec_1(mkIRExpr_HWord(canonical)));
+	addStmtToIRSB(sb, IRStmt_Dirty(lo_call));
+	IRTemp hi_temp = newIRTemp(sb->tyenv, Ity_I64);
+	IRDirty* hi_call = unsafeIRDirty_1_N(hi_temp, 1, "get_128_hi", &rt_retrieve_128_hi, mkIRExprVec_1(mkIRExpr_HWord(canonical)));
+	addStmtToIRSB(sb, IRStmt_Dirty(hi_call));
+	return ML_(flatten_expression)(sb, IRExpr_Binop(hilo, IRExpr_RdTmp(hi_temp), IRExpr_RdTmp(lo_temp)));	
+}
+
+static void rt_store_V128(HWord idx, ULong lo, ULong hi)
+{
+	SRThreadState* state = rt_my_state();
+	state->values[idx].V128.lo = lo;
+	state->values[idx].V128.hi = hi;
+}
+
+static void helper_store_128(IRSB* sb, IRTemp canonical, IRExpr* guard, IROp get_lo, IROp get_hi)
+{
+	IRExpr* const_canonical = mkIRExpr_HWord(canonical);
+	IRExpr* lo = ML_(flatten_expression)(sb, IRExpr_Unop(get_lo, IRExpr_RdTmp(canonical)));
+	IRExpr* hi = ML_(flatten_expression)(sb, IRExpr_Unop(get_hi, IRExpr_RdTmp(canonical)));
+	IRDirty* call = unsafeIRDirty_0_N(3, "put_V128", &rt_store_V128,
+		mkIRExprVec_3(const_canonical, lo, hi));
+	if (guard)
+		call->guard = guard;
+	addStmtToIRSB(sb, IRStmt_Dirty(call));
+}
+
 IRExpr* ML_(helper_retrieve_temp)(IRSB* sb, IRTemp canonical, IRType type)
 {
+	if (type == Ity_V128)
+		return helper_retrieve_128(sb, canonical, Iop_64HLtoV128);
+	if (type == Ity_I128)
+		return helper_retrieve_128(sb, canonical, Iop_64HLto128);
 	Accessor* accessor = get_accessor(type);
 	IRExpr* const_canonical = mkIRExpr_HWord(canonical);
 	IRTemp temp = newIRTemp(sb->tyenv, Ity_I64);
@@ -137,6 +183,10 @@ IRExpr* ML_(helper_retrieve_temp)(IRSB* sb, IRTemp canonical, IRType type)
 void ML_(helper_store_temp)(IRSB* sb, IRTemp canonical, IRExpr* guard)
 {
 	IRType type = typeOfIRTemp(sb->tyenv, canonical);
+	if (type == Ity_V128)
+		return helper_store_128(sb, canonical, guard, Iop_V128to64, Iop_V128HIto64);
+	if (type == Ity_I128)
+		return helper_store_128(sb, canonical, guard, Iop_128to64, Iop_128HIto64);
 	Accessor* accessor = get_accessor(type);
 	IRExpr* const_canonical = mkIRExpr_HWord(canonical);
 	IRExpr* source = IRExpr_RdTmp(canonical);
