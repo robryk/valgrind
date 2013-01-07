@@ -43,7 +43,7 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
                       VexArchInfo* archinfo_host,
                       IRType gWordTy, IRType hWordTy )
 {
-	ppIRSB(sbIn);
+	//ppIRSB(sbIn);
 	IRSB* sbOut = deepCopyIRSBExceptStmts(sbIn);
 	int mem_access_first = 0;
 	tl_assert(sbIn->stmts[0]->tag == Ist_IMark);
@@ -72,17 +72,17 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 				// We stop instrumenting short of an instruction with memory access
 				sbOut->next = mkIRExpr_HWord(self_address);
 				sbOut->jumpkind = Ijk_Boring;
-				VG_(printf)("Stopped short of mem access.\n");
-				ppIRSB(sbOut);
+				//VG_(printf)("Stopped short of mem access.\n");
+				//ppIRSB(sbOut);
 				return sbOut;
 			}
 			int k;
-			for(k = i + 1; k < j; k++)
+			for(k = i; k < j; k++)
 				addStmtToIRSB(sbOut, sbIn->stmts[k]);
 			i = j;
 		}
-		VG_(printf)("No memory accesses in input SB.\n");
-		ppIRSB(sbOut);
+		//VG_(printf)("No memory accesses in input SB.\n");
+		//ppIRSB(sbOut);
 		return sbOut;
 	} else {
 		Addr64 self_address = sbIn->stmts[0]->Ist.IMark.addr + sbIn->stmts[0]->Ist.IMark.delta;
@@ -90,7 +90,7 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		IRJumpKind jumpkind;
 		IRExpr* next_instr;
 		if (i == sbIn->stmts_used) {
-			VG_(printf)("aaa\n");
+			//VG_(printf)("aaa\n");
 			next_instr = sbIn->next;
 			jumpkind = sbIn->jumpkind;
 		} else {
@@ -99,12 +99,12 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		}
 		if (mem_access_first == 1 && jumpkind == Ijk_Boring) {
 			int k;
-			for(k = 1; k < i; k++)
+			for(k = 0; k < i; k++)
 				addStmtToIRSB(sbOut, sbIn->stmts[k]);
 			sbOut->next = next_instr;
 			sbOut->jumpkind = Ijk_Boring; // Yield
-			VG_(printf)("Finishing early after a single-mem-access instruction.\n");
-			ppIRSB(sbOut);
+			//VG_(printf)("Finishing early after a single-mem-access instruction.\n");
+			//ppIRSB(sbOut);
 			return sbOut;
 		}
 		// We either have >=2 mem accesses or we must do a nonboring jump at the end, so we need phases.
@@ -132,8 +132,8 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 			sbOut->next = ML_(instrument_expression)(&state, next_instr);
 		}
 		ML_(instrument_phased_exit)(&state, NULL);
-		VG_(printf)("Finishing early after emitting a phased instruction.\n");
-		ppIRSB(sbOut);
+		//VG_(printf)("Finishing early after emitting a phased instruction.\n");
+		//ppIRSB(sbOut);
 		return sbOut;
 	}
 }
