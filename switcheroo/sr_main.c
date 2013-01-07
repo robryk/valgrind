@@ -6,6 +6,7 @@
 #include "pub_tool_libcassert.h"
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_options.h"
+#include "pub_tool_scheduler.h"
 #include "pub_tool_tooliface.h"
 #include "sr_instrument.h"
 
@@ -45,7 +46,7 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 {
 	//ppIRSB(sbIn);
 	IRSB* sbOut = deepCopyIRSBExceptStmts(sbIn);
-	int mem_access_first = 0;
+	int mem_access_first = 0; // count of memory accesses in first instruction of sbIn
 	tl_assert(sbIn->stmts[0]->tag == Ist_IMark);
 	int i = 1;
 	for(i = 1; i < sbIn->stmts_used; i++) {
@@ -99,35 +100,55 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		}
 		if (mem_access_first == 1 && jumpkind == Ijk_Boring) {
 			int k;
+			// We must split this instruction into phases if we have any nonboring exit (including Exit stmts).
 			for(k = 0; k < i; k++)
+				if (sbIn->stmts[k]->tag == Ist_Exit && sbIn->stmts[k]->Ist.Exit.jk != Ijk_Boring)
+					goto phasify;
+			for(k = 0; k < i; k++) {
+				if (sbIn->stmts[k]->tag == Ist_Exit) {
+					tl_assert(sbIn->stmts[k]->Ist.Exit.jk == Ijk_Boring);
+					sbIn->stmts[k]->Ist.Exit.jk = Ijk_Yield;
+				}
 				addStmtToIRSB(sbOut, sbIn->stmts[k]);
+			}
 			sbOut->next = next_instr;
-			sbOut->jumpkind = Ijk_Boring; // Yield
+			sbOut->jumpkind = Ijk_Yield;
 			//VG_(printf)("Finishing early after a single-mem-access instruction.\n");
 			//ppIRSB(sbOut);
 			return sbOut;
 		}
-		// We either have >=2 mem accesses or we must do a nonboring jump at the end, so we need phases.
+phasify: ;
+		// We either have >=2 mem accesses or we must do a nonboring jump somewhere, so we need phases.
 		// This instruction will be the last we instrument from this BB.
 		SRState state = ML_(instrument_start)(sbOut, self_address);
 		int k;
-		Bool was_mem = False;
+		Bool was_mem = False; // did we have a memory access since last phase boundary
 		for(k = 1; k < i; k++) {
 			if (is_memory_access(sbIn->stmts[k])) {
 				if (was_mem)
-					ML_(instrument_next_phase)(&state, Ijk_Boring); // Yield
+					ML_(instrument_next_phase)(&state, Ijk_Yield);
 				was_mem = True;
+			} else if (sbIn->stmts[k]->tag == Ist_Exit) {
+				if (sbIn->stmts[k]->Ist.Exit.jk == Ijk_Boring) {
+					sbIn->stmts[k]->Ist.Exit.jk = Ijk_Yield;
+				} else {
+					// TODO: We might wish not to force a yielding jump if this jump's guard is not satisfied.
+					// This'd require some changes in phasify and would only matter in conditional nonboring jumps.
+					if (was_mem)
+						ML_(instrument_next_phase)(&state, Ijk_Yield);
+					was_mem = False;
+				}
 			}
 			ML_(instrument_statement)(&state, sbIn->stmts[k]);
 		}
 		if (jumpkind == Ijk_Boring) {
-			sbOut->jumpkind = Ijk_Boring; // Yield
+			sbOut->jumpkind = Ijk_Yield;
 			sbOut->next = ML_(instrument_expression)(&state, next_instr);
 		} else {
 			// We need to yield after every mem access, so we need to do so at the very end.
 			// A Boring jump we can transform into a Yield jump, for the rest we just add a
 			// mostly empty phase.
-			ML_(instrument_next_phase)(&state, Ijk_Boring);
+			ML_(instrument_next_phase)(&state, Ijk_Yield);
 			sbOut->jumpkind = jumpkind;
 			sbOut->next = ML_(instrument_expression)(&state, next_instr);
 		}
