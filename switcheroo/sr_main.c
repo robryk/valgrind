@@ -5,11 +5,13 @@
 #include "pub_tool_basics.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_mallocfree.h"
+#include "pub_tool_options.h"
 #include "pub_tool_tooliface.h"
 #include "sr_instrument.h"
 
 static void sr_post_clo_init(void)
 {
+	VG_(clo_vex_control).iropt_register_updates = VexRegUpdAllregsAtEachInsn;
 }
 
 static Bool is_memory_access(IRStmt* st)
