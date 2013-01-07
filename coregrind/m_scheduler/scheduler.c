@@ -95,6 +95,8 @@
 #include "pub_core_redir.h"
 #include "libvex_emnote.h"          // VexEmNote
 
+#include "pub_tool_scheduler.h"
+
 
 /* ---------------------------------------------------------------------
    Types and globals for the scheduler.
@@ -143,6 +145,8 @@ static ULong stats__n_xindir_misses = 0;
 /* Sanity checking counts. */
 static UInt sanity_fast_count = 0;
 static UInt sanity_slow_count = 0;
+
+Int VG_(force_thread) = -1;
 
 void VG_(print_scheduler_stats)(void)
 {
@@ -1189,7 +1193,11 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
    while (!VG_(is_exiting)(tid)) {
 
       vg_assert(dispatch_ctr >= 0);
-      if (dispatch_ctr == 0) {
+      Bool do_switch = (dispatch_ctr == 0);
+      if (VG_(force_thread) != -1) {
+         do_switch = (VG_(force_thread) != VG_(gettid)());
+      }
+      if (do_switch) {
 
 	 /* Our slice is done, so yield the CPU to another thread.  On
             Linux, this doesn't sleep between sleeping and running,
@@ -1242,6 +1250,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 /* paranoia ... */
 	 vg_assert(tst->tid == tid);
 	 vg_assert(tst->os_state.lwpid == VG_(gettid)());
+	 continue;
       }
 
       /* For stats purposes only. */
