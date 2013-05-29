@@ -47,16 +47,21 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 	//ppIRSB(sbIn);
 	IRSB* sbOut = deepCopyIRSBExceptStmts(sbIn);
 	int mem_access_first = 0; // count of memory accesses in first instruction of sbIn
-	tl_assert(sbIn->stmts[0]->tag == Ist_IMark);
-	int i = 1;
-	for(i = 1; i < sbIn->stmts_used; i++) {
+	int first_inst = 0;
+	while (sbIn->stmts[first_inst]->tag != Ist_IMark) {
+		addStmtToIRSB(sbOut, sbIn->stmts[first_inst]);
+		first_inst++;
+	}
+	tl_assert(sbIn->stmts[first_inst]->tag == Ist_IMark);
+	int i;
+	for(i = first_inst + 1; i < sbIn->stmts_used; i++) {
 		if (is_memory_access(sbIn->stmts[i]))
 			mem_access_first++;
 		if (sbIn->stmts[i]->tag == Ist_IMark)
 			break;
 	}
 	if (mem_access_first == 0) {
-		i = 0;
+		i = first_inst;
 		while (i < sbIn->stmts_used) {
 			tl_assert(sbIn->stmts[i]->tag == Ist_IMark);
 			Addr64 self_address = sbIn->stmts[i]->Ist.IMark.addr + sbIn->stmts[i]->Ist.IMark.delta;
@@ -86,7 +91,7 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		//ppIRSB(sbOut);
 		return sbOut;
 	} else {
-		Addr64 self_address = sbIn->stmts[0]->Ist.IMark.addr + sbIn->stmts[0]->Ist.IMark.delta;
+		Addr64 self_address = sbIn->stmts[first_inst]->Ist.IMark.addr + sbIn->stmts[first_inst]->Ist.IMark.delta;
 		// Our first instruction has a memory access: split it into phases
 		IRJumpKind jumpkind;
 		IRExpr* next_instr;
@@ -101,10 +106,10 @@ IRSB* sr_instrument ( VgCallbackClosure* closure,
 		if (mem_access_first == 1 && jumpkind == Ijk_Boring) {
 			int k;
 			// We must split this instruction into phases if we have any nonboring exit (including Exit stmts).
-			for(k = 0; k < i; k++)
+			for(k = first_inst; k < i; k++)
 				if (sbIn->stmts[k]->tag == Ist_Exit && sbIn->stmts[k]->Ist.Exit.jk != Ijk_Boring)
 					goto phasify;
-			for(k = 0; k < i; k++) {
+			for(k = first_inst; k < i; k++) {
 				if (sbIn->stmts[k]->tag == Ist_Exit) {
 					tl_assert(sbIn->stmts[k]->Ist.Exit.jk == Ijk_Boring);
 					sbIn->stmts[k]->Ist.Exit.jk = Ijk_Yield;
@@ -123,7 +128,7 @@ phasify: ;
 		SRState state = ML_(instrument_start)(sbOut, self_address);
 		int k;
 		Bool was_mem = False; // did we have a memory access since last phase boundary
-		for(k = 1; k < i; k++) {
+		for(k = first_inst + 1; k < i; k++) {
 			if (is_memory_access(sbIn->stmts[k])) {
 				if (was_mem)
 					ML_(instrument_next_phase)(&state, Ijk_Yield);
