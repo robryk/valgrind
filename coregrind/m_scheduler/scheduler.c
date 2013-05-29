@@ -1355,8 +1355,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
             before swapping to another.  That means that short term
             spins waiting for hardware to poke memory won't cause a
             thread swap. */
-	 if (dispatch_ctr > 2000) 
-            dispatch_ctr = 2000;
+	 dispatch_ctr = 0;
+//	 if (dispatch_ctr > 2000) 
+//            dispatch_ctr = 2000;
 	 break;
 
       case VG_TRC_INNER_COUNTERZERO:
